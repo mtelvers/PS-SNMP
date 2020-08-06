@@ -225,20 +225,33 @@ Function BERtoSNMP {
 			foreach ($varbind in $berObj[0].inner[2].inner[3].inner) {
 				if ($varbind.tag -eq [asn1tag]::asn1_sequence) {
 					$oid = ByteArrayToOID $varbind.inner[0].content
-					if ($varbind.inner[1].class -eq [asn1class]::asn1_universal) {
-						switch ($varbind.inner[1].tag) {
-							"asn1_null" { $values.$oid = $null }
-							"asn1_integer" { $values.$oid = ByteArrayToUInt $varbind.inner[1].content }
-							"asn1_octet_string" { $values.$oid = [System.Text.Encoding]::ASCII.GetString($varbind.inner[1].content) }
-							"asn1_bit_string" { $values.$oid = $varbind.inner[1].content }
-							default { $varbind.inner[1].tag }
+					switch ($varbind.inner[1].class) {
+						"asn1_universal" {
+							switch ($varbind.inner[1].tag) {
+								"asn1_null" { $values.$oid = $null }
+								"asn1_integer" { $values.$oid = ByteArrayToUInt $varbind.inner[1].content }
+								"asn1_octet_string" {
+									if (($varbind.inner[1].content -gt 128).count -gt 0) {
+										$values.$oid = [System.BitConverter]::ToString($varbind.inner[1].content)
+									} else {
+										$values.$oid = [System.Text.Encoding]::ASCII.GetString($varbind.inner[1].content)
+									}
+								}
+								"asn1_bit_string" { $values.$oid = $varbind.inner[1].content }
+								"asn1_oid" { $values.$oid = ByteArrayToOID $varbind.inner[1].content }
+								default { Write-Host "Unhandled universal $($varbind.inner[1].tag)" }
+							}
 						}
-					}
-					if ($varbind.inner[1].class -eq [asn1class]::asn1_application) {
-						switch ($varbind.inner[1].tag) {
-							"asn1_bit_string" { $values.$oid = ByteArrayToUInt $varbind.inner[1].content }
-							default { $varbind.inner[1].tag }
+						"asn1_application" {
+							switch ($varbind.inner[1].tag.value__) {
+								0 { $values.$oid = "{0}.{1}.{2}.{3}" -f $varbind.inner[1].content } # IP Address
+								1 { $values.$oid = ByteArrayToUInt $varbind.inner[1].content } # Counter32
+								2 { $values.$oid = ByteArrayToUInt $varbind.inner[1].content } # Gauge32
+								3 { $values.$oid = ByteArrayToUInt $varbind.inner[1].content } # Ticks
+								default { Write-Host "Unhandled application $($varbind.inner[1].tag.value__)" [System.BitConverter]::ToString($varbind.inner[1].content) }
+							}
 						}
+						default { Write-Host "Unhandled class" }
 					}
 				}
 			}
