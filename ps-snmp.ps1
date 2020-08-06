@@ -1,0 +1,281 @@
+
+$data = [byte[]]@(0x3f, 130, 130, 55, 0x83, 0x1, 0x1, 0x1, 0xf)
+$data = [byte[]]@(0x3f, 130, 130, 55, 0x03, 0xf)
+$data = [byte[]]@(0x30, 0x17, 0x2, 0x1, 0x0, 0x4, 0x6, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa0, 0xa, 0x2, 0x2, 0x65, 0x2e, 0x2, 0x1, 0x0, 0x2, 0x1, 0x0)
+
+$data = [Byte[]]@(0x30, 0x27, 0x02, 0x01, 0x00, 0x04,
+    0x06, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa0,  0x1a, 0x02, 0x02, 0x65, 0x2e, 0x02, 0x01, 0x00,
+    0x02, 0x01, 0x00, 0x30, 0x0e, 0x30, 0x0c, 0x06,  0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05,
+    0x00, 0x05, 0x00)
+
+$data = [Byte[]]@(0x30, 0x30, 0x02, 0x01, 0x00, 0x04,
+    0x06, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa2,  0x23, 0x02, 0x02, 0x65, 0x2e, 0x02, 0x01, 0x00,
+    0x02, 0x01, 0x00, 0x30, 0x17, 0x30, 0x15, 0x06,  0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05,
+    0x00, 0x04, 0x09, 0x4e, 0x50, 0x49, 0x46, 0x30,  0x30, 0x46, 0x45, 0x34)
+
+Add-Type -TypeDefinition @"
+       public enum asn1tag
+       {
+               asn1_eoc,
+               asn1_boolean,
+               asn1_integer,
+               asn1_bit_string,
+               asn1_octet_string,
+               asn1_null,
+               asn1_oid,
+               asn1_object_descriptor,
+               asn1_external,
+               asn1_real,
+               asn1_enumerated,
+               asn1_embedded_pdv,
+               asn1_utf8string,
+               asn1_relative_oid,
+               asn1_time,
+               asn1_reserved,
+               asn1_sequence,
+               asn1_set,
+               asn1_numeric_string,
+               asn1_printable_string,
+       }
+"@
+
+Add-Type -TypeDefinition @"
+       public enum asn1class
+       {
+               asn1_universal,
+               asn1_application,
+               asn1_context_specific,
+               asn1_private,
+       }
+"@
+
+Function DecodeBER {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[byte[]] 
+		$berInput
+	)
+
+	$ret = @()
+	$length = 0
+
+	for ($i = 0; $i -lt $berInput.length; $i += $length) {
+		$tag = [asn1tag]($berInput[$i] -band 0x1f)
+		$constructed = [boolean]($berInput[$i] -band 0x20)
+		$class = [asn1class](($berInput[$i] -band 0xc0) -shr 6)
+
+		$i++
+
+		if ($tag -eq 31) {
+			$tag = 0
+			do {
+				$tag = ($tag -shl 7) -bor ($berInput[$i] -band 0x7f)
+			} while ($berInput[$i++] -band 0x80)
+		}
+
+		$length = $berInput[$i] -band 0x7f
+		if ($berInput[$i++] -band 0x80) {
+			$end = $i + $length
+			$length = 0
+			for (; $i -lt $end; $i++) {
+				$length = ($length -shl 8) -bor $berInput[$i]
+			}
+		}
+
+		$content = $berInput[$i..($i + $length - 1)]
+
+		$ret += New-Object PSObject -Property @{class=$class; constructed=$constructed; tag=$tag; content=$content}
+
+		if ($constructed) {
+			$ret += (DecodeBER $content)
+		}
+	}
+
+	return $ret
+}
+
+
+Function ByteArrayToUInt {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[byte[]] 
+		$bytes
+	)
+
+	$ret = 0
+	for ($i = 0; $i -lt $bytes.length; $i++) {
+		$ret = ($ret -shl 8) -bor $bytes[$i]
+	}
+	return $ret
+}
+
+Function UIntToByteArray {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[Int] 
+		$num
+	)
+
+	$ret = @()
+	do {
+		if ($ret.length -eq 0) {
+			$ret += [byte]($num -band 0x7f)
+		} else {
+			$ret += [byte](($num -band 0x7f) -bor 0x80)
+		}
+		$num = $num -shr 7
+	} while ($num -gt 0)
+	$ret = ,$ret[-1..-($ret.length)]
+
+	return $ret
+}
+
+
+Function ByteArrayToOID {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[byte[]] 
+		$bytes
+	)
+
+	$ret = ""
+	if ($bytes.length -gt 0) {
+		$ret += "{0}.{1}" -f [Int]($bytes[0] / 40), [Int]($bytes[0] % 40)
+	}
+
+	for ($i = 1; $i -lt $bytes.length;) {
+		$arc = 0
+		do {
+			$arc = ($arc -shl 7) -bor ($bytes[$i] -band 0x7f)
+		} while ($bytes[$i++] -band 0x80)
+		$ret += "." + $arc.ToString()
+	}
+
+	return $ret
+}
+
+Function OIDToByteArray {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string] 
+		$oid
+	)
+
+	$ret = [byte[]]@()
+	$split = $oid.split('.');
+
+	if ($split.length -gt 0) {
+		$ret += 40 * [byte]$split[0]
+	}
+
+	if ($split.length -gt 1) {
+		$ret[0] += [byte]$split[1]
+	}
+
+	for ($i = 2; $i -lt $split.length; $i++) {
+		$arc = [int]$split[$i]
+		$tmp = @()
+		do {
+			if ($tmp.length -eq 0) {
+				$tmp += [byte]($arc -band 0x7f)
+			} else {
+				$tmp += [byte](($arc -band 0x7f) -bor 0x80)
+			}
+			$arc = $arc -shr 7
+		} while ($arc -gt 0)
+		$ret += $tmp[-1..-($tmp.length)]
+	}
+
+	return $ret
+}
+
+
+Function BERtoSNMP {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[array] 
+		$berData
+	)
+
+	if (($berData[0].class -ne [asn1class]::asn1_universal) -or ($berData[0].tag -ne [asn1tag]::asn1_sequence) -or
+		($berData[1].class -ne [asn1class]::asn1_universal) -or ($berData[1].tag -ne [asn1tag]::asn1_integer) -or
+		($berData[2].class -ne [asn1class]::asn1_universal) -or ($berData[2].tag -ne [asn1tag]::asn1_octet_string) -or
+		($berData[3].class -ne [asn1class]::asn1_context_specific) -or ($berData[3].tag -gt 4)) {
+		return $null
+	}
+
+	$version = ByteArrayToUInt $berData[1].content
+	$community = [System.Text.Encoding]::ASCII.GetString($berData[2].content)
+	$pdu = $berData[3].tag
+
+	switch ($pdu) {
+		{($_ -eq 0) -or ($_ -eq 2)} {
+			$request_id = ByteArrayToUInt $berData[4].content
+			$error_status = ByteArrayToUInt $berData[5].content
+			$error_index = ByteArrayToUInt $berData[6].content
+			$values = @{}
+			for ($i = 8; $i -lt $berData.length; $i += 3) {
+				if ($berData[$i].tag -eq [asn1tag]::asn1_sequence) {
+					$oid = ByteArrayToOID $berData[$i + 1].content
+					switch ($berData[$i + 2].tag) {
+						"asn1_null" { $values.$oid = $null }
+						"asn1_integer" { $values.$oid = ByteArrayToUInt $berData[$i + 2].content }
+						"asn1_octet_string" { $values.$oid = [System.Text.Encoding]::ASCII.GetString($berData[$i + 2].content) }
+						default { $berData[$i + 2].tag }
+					}
+				}
+			}
+			return New-Object PSObject -Property @{version=$version; community=$community; pdu=[Int]$pdu; varbind=$values}
+		}
+		default { return $null }
+	}
+}
+
+Function SNMPtoBER {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[PSObject[]] 
+		$snmpData
+	)
+
+	$ret = @()
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$true; tag=[asn1tag]::asn1_sequence; content=$null}
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$false; tag=[asn1tag]::asn1_integer; content=(UIntToByteArray $snmpData.version)}
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$false; tag=[asn1tag]::asn1_octet_string; content=[System.Text.Encoding]::ASCII.GetBytes($snmpData.community)}
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_context_specific; constructed=$true; tag=0; content=$null}
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$false; tag=[asn1tag]::asn1_integer; content=(UIntToByteArray (Get-Random -Maximum 65535))}
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$false; tag=[asn1tag]::asn1_integer; content=(UIntToByteArray 0)}
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$false; tag=[asn1tag]::asn1_integer; content=(UIntToByteArray 0)}
+	$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$true; tag=[asn1tag]::asn1_sequence; content=$null}
+	foreach ($key in $snmpData.varbind.keys) {
+		$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$true; tag=[asn1tag]::asn1_sequence; content=$null}
+		$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$false; tag=[asn1tag]::asn1_oid; content=(OIDToByteArray $key)}
+		$ret += New-Object PSObject -Property @{class=[asn1class]::asn1_universal; constructed=$false; tag=[asn1tag]::asn1_null; content=$null}
+	}
+	$ret
+}
+
+Function EncodeBER {
+	Param (
+		[Parameter(mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[PSObject[]] 
+		$berObj
+	)
+
+	for ($i = $berObj.length - 1; $i -ge 0; $i--) {
+		$berObj[$i]
+	}
+}
+
+$x = DecodeBER $data
+$s = BERtoSNMP $x
+SNMPtoBER $s
+
