@@ -1,17 +1,17 @@
 
-$data = [byte[]]@(0x3f, 130, 130, 55, 0x83, 0x1, 0x1, 0x1, 0xf)
-$data = [byte[]]@(0x3f, 130, 130, 55, 0x03, 0xf)
-$data = [byte[]]@(0x30, 0x17, 0x2, 0x1, 0x0, 0x4, 0x6, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa0, 0xa, 0x2, 0x2, 0x65, 0x2e, 0x2, 0x1, 0x0, 0x2, 0x1, 0x0)
+#$data = [byte[]]@(0x3f, 130, 130, 55, 0x83, 0x1, 0x1, 0x1, 0xf)
+#$data = [byte[]]@(0x3f, 130, 130, 55, 0x03, 0xf)
+#$data = [byte[]]@(0x30, 0x17, 0x2, 0x1, 0x0, 0x4, 0x6, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa0, 0xa, 0x2, 0x2, 0x65, 0x2e, 0x2, 0x1, 0x0, 0x2, 0x1, 0x0)
 
-$data = [Byte[]]@(0x30, 0x27, 0x02, 0x01, 0x00, 0x04,
-    0x06, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa0,  0x1a, 0x02, 0x02, 0x65, 0x2e, 0x02, 0x01, 0x00,
-    0x02, 0x01, 0x00, 0x30, 0x0e, 0x30, 0x0c, 0x06,  0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05,
-    0x00, 0x05, 0x00)
+#$data = [Byte[]]@(0x30, 0x27, 0x02, 0x01, 0x00, 0x04,
+#    0x06, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa0,  0x1a, 0x02, 0x02, 0x65, 0x2e, 0x02, 0x01, 0x00,
+#    0x02, 0x01, 0x00, 0x30, 0x0e, 0x30, 0x0c, 0x06,  0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05,
+#    0x00, 0x05, 0x00)
 
-$data = [Byte[]]@(0x30, 0x30, 0x02, 0x01, 0x00, 0x04,
-    0x06, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa2,  0x23, 0x02, 0x02, 0x65, 0x2e, 0x02, 0x01, 0x00,
-    0x02, 0x01, 0x00, 0x30, 0x17, 0x30, 0x15, 0x06,  0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05,
-    0x00, 0x04, 0x09, 0x4e, 0x50, 0x49, 0x46, 0x30,  0x30, 0x46, 0x45, 0x34)
+#$data = [Byte[]]@(0x30, 0x30, 0x02, 0x01, 0x00, 0x04,
+#    0x06, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0xa2,  0x23, 0x02, 0x02, 0x65, 0x2e, 0x02, 0x01, 0x00,
+#    0x02, 0x01, 0x00, 0x30, 0x17, 0x30, 0x15, 0x06,  0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05,
+#    0x00, 0x04, 0x09, 0x4e, 0x50, 0x49, 0x46, 0x30,  0x30, 0x46, 0x45, 0x34)
 
 Add-Type -TypeDefinition @"
        public enum asn1tag
@@ -225,11 +225,20 @@ Function BERtoSNMP {
 			foreach ($varbind in $berObj[0].inner[2].inner[3].inner) {
 				if ($varbind.tag -eq [asn1tag]::asn1_sequence) {
 					$oid = ByteArrayToOID $varbind.inner[0].content
-					switch ($varbind.inner[1].tag) {
-						"asn1_null" { $values.$oid = $null }
-						"asn1_integer" { $values.$oid = ByteArrayToUInt $varbind.inner[1].content }
-						"asn1_octet_string" { $values.$oid = [System.Text.Encoding]::ASCII.GetString($varbind.inner[1].content) }
-						default { $varbind.inner[1].tag }
+					if ($varbind.inner[1].class -eq [asn1class]::asn1_universal) {
+						switch ($varbind.inner[1].tag) {
+							"asn1_null" { $values.$oid = $null }
+							"asn1_integer" { $values.$oid = ByteArrayToUInt $varbind.inner[1].content }
+							"asn1_octet_string" { $values.$oid = [System.Text.Encoding]::ASCII.GetString($varbind.inner[1].content) }
+							"asn1_bit_string" { $values.$oid = $varbind.inner[1].content }
+							default { $varbind.inner[1].tag }
+						}
+					}
+					if ($varbind.inner[1].class -eq [asn1class]::asn1_application) {
+						switch ($varbind.inner[1].tag) {
+							"asn1_bit_string" { $values.$oid = ByteArrayToUInt $varbind.inner[1].content }
+							default { $varbind.inner[1].tag }
+						}
 					}
 				}
 			}
@@ -319,12 +328,84 @@ Function EncodeBER {
 	return ,$bytes
 }
 
-$x = DecodeBER $data
-$s = BERtoSNMP $x
-$s
+#$x = DecodeBER $data
+#$s = BERtoSNMP $x
+#$s
+#
+#$q = SNMPGetRequesttoBER (New-Object PSObject -Property @{version=0; community="public"; pdu=0; request_id=(Get-Random -Maximum 65535); varbind=@{'1.3.6.1.2.1.1.5.0'=$null} })
+#$w = EncodeBER $q
+#[System.BitConverter]::ToString($w)
 
-$q = SNMPGetRequesttoBER (New-Object PSObject -Property @{version=0; community="public"; pdu=0; request_id=(Get-Random -Maximum 65535); varbind=@{'1.3.6.1.2.1.1.5.0'=$null} })
-$w = EncodeBER $q
-[System.BitConverter]::ToString($w)
+
+function Get-SNMP {
+	<#
+		.SYNOPSIS
+		Sends a SNMP request
+
+		.EXAMPLE
+		Get-SNMP -Server 172.29.0.89 -OIDs @('1.3.6.1.2.1.1.5.0', '1.3.6.1.2.1.1.3.0', '1.3.6.1.2.1.25.3.2.1.3.1', '1.3.6.1.2.1.43.5.1.1.17.1')
+	#>
+	Param
+	(
+		# SNMP server to query
+		[Parameter(mandatory = $true,
+				HelpMessage = 'Server to query')]
+		[ValidateNotNullOrEmpty()]
+		[String] 
+		$Server,
+
+		# OID
+		[Parameter(mandatory = $true,
+				HelpMessage = 'Array of OID values to query')]
+		[ValidateNotNullOrEmpty()]
+		[String[]] 
+		$OIDs,
+
+		#SNMP UDP port to send message to. Defaults to 161 if not specified.
+		[Parameter(mandatory = $false)]
+		[ValidateNotNullOrEmpty()]
+		[ValidateRange(1,65535)]
+		[UInt16]
+		$UDPPort = 161,
+
+		# UDP Timeout in milliseconds.  Defaults to 3000ms
+		[Parameter(mandatory = $false)]
+		[ValidateNotNullOrEmpty()]
+		[UInt32]
+		$Timeout = 3000
+	)
+
+	$ret = $null
+
+	# Convert the string into an IP Address
+	$serverIPAddress = [IPAddress]$Server
+
+	# Create an IP End Point
+	$serverEndPoint = New-Object System.Net.IPEndPoint($serverIPAddress, $UDPPort)
+
+	# Create a UDP Client Object based upon the endpoint
+	$UDPClient = New-Object -TypeName System.Net.Sockets.UdpClient
+	$UDPClient.Connect($serverEndPoint);
+
+	# Create a message
+	$oidhash = @{}
+	$OIDs |% { $oidhash[$_] = $null }
+	$getrequest = SNMPGetRequesttoBER (New-Object PSObject -Property @{version=0; community="public"; pdu=0; request_id=(Get-Random -Maximum 65535); varbind=,$oidhash})
+	$messsage = EncodeBER $getrequest
+
+	# Send the Message
+	$null = $UDPClient.Send($messsage, $messsage.Length)
+
+	$asyncResult = $UDPCLient.BeginReceive($null, $null)
+	if ($asyncResult.AsyncWaitHandle.WaitOne($Timeout)) {
+		$reply = DecodeBER $UDPClient.EndReceive($asyncResult, [ref]$serverEndPoint)
+		$ret = BERtoSNMP $reply
+	}
+
+	#Close the connection
+	$UDPClient.Close()
+
+	return $ret
+}
 
 
