@@ -86,12 +86,11 @@ Function DecodeBER {
 		$content = $berInput[$i..($i + $length - 1)]
 
 		if ($constructed) {
-			$ret += New-Object PSObject -Property @{class=$class; constructed=$constructed; tag=$tag; content=$content; inner=(DecodeBER $content)}
+			$ret += New-Object PSObject -Property @{class=$class; constructed=$true; tag=$tag; content=$null; inner=(DecodeBER $content)}
 		} else {
-			$ret += New-Object PSObject -Property @{class=$class; constructed=$constructed; tag=$tag; content=$content}
+			$ret += New-Object PSObject -Property @{class=$class; constructed=$false; tag=$tag; content=$content}
 		}
 	}
-
 	return ,$ret
 }
 
@@ -297,7 +296,6 @@ Function EncodeBER {
 
 	$bytes = [byte[]]@()
 	foreach ($b in $berObj) {
-
 		$bits = (($b.class.value__ -band 0x3) -shl 6)
 		if ($b.constructed) {
 			$bits = $bits -bor 0x20
@@ -328,15 +326,19 @@ Function EncodeBER {
 		if ($content.length -lt 127) {
 			$bytes += $content.length
 		} else {
-			$len = UIntToByteArray $content.length
-			$bytes += $len.length -band 0x80
-			$bytes += $len
+			$num = $content.length
+			$len = [byte[]]@()
+			do {
+				$len += [byte]($num -band 0xff)
+				$num = $num -shr 8
+			} while ($num -gt 0)
+			$bytes += $len.length -bor 0x80
+			$bytes += $len[-1..-($len.length)]
 		}
 
 		if ($content.length -gt 0) {
 			$bytes += $content
 		}
-
 	}
 	return ,$bytes
 }
